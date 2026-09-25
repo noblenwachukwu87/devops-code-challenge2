@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hello-app-gitops
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/noblenwachukwu87/devops-code-challenge2.git
+    targetRevision: gitops
+    path: app-chart
+    helm:
+      releaseName: hello-app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gitops
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
