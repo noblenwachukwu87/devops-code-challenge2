@@ -1,0 +1,54 @@
+name: CI - Build, Push to ECR, Update Helm Tag
+
+on:
+  push:
+    branches: [gitops]
+    paths:
+      - 'app/**'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # needed for OIDC login to AWS
+  contents: write   # needed to commit the new image tag
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: devops-challenge2-app
+  ROLE_ARN: arn:aws:iam::491865087343:role/github-actions-ecr-push
+
+jobs:
+  build-push-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ github.sha }}
+        run: |
+          docker build --platform linux/amd64 -t $REGISTRY/$ECR_REPOSITORY:$TAG app/
+          docker push $REGISTRY/$ECR_REPOSITORY:$TAG
+
+      - name: Update image tag in Helm values (GitOps)
+        env:
+          TAG: ${{ github.sha }}
+        run: |
+          yq -i '.image.tag = strenv(TAG)' app-chart/values.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add app-chart/values.yaml
+          git commit -m "ci: update image tag to ${TAG::7} [skip ci]"
+          git push
