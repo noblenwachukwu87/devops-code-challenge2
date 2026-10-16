@@ -1,7 +1,11 @@
 resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
   role_arn = aws_iam_role.eks_cluster.arn
-  version  = "1.31"
+  version  = "1.36"
+
+    lifecycle {
+    ignore_changes = [tags]
+  }
 
   vpc_config {
     subnet_ids              = concat(aws_subnet.public[*].id, aws_subnet.private[*].id)

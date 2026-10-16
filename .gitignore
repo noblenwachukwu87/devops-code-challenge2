@@ -5,3 +5,5 @@ iam_policy.json
 .terraform/
 *.tfstate
 *.tfstate.*
+*.log
+tfplan
