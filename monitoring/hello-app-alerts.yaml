@@ -1,0 +1,24 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: hello-app-alerts
+  namespace: monitoring
+
+metadata:
+  name: hello-app-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring
+
+spec:
+  groups:
+    - name: hello-app
+      rules:
+        - alert: HelloAppDown
+          expr: kube_deployment_status_replicas_available{namespace="gitops", deployment="hello-app-app-chart"} < 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Hello app has no available pods"
+            description: "No pods of hello-app-app-chart are available in the gitops namespace. Customers cannot reach the app."
