@@ -7,7 +7,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/noblenwachukwu87/devops-code-challenge2.git
-    targetRevision: gitops
+    targetRevision: production-upgrade
     path: app-chart
     helm:
       releaseName: hello-app
