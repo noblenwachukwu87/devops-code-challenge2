@@ -161,3 +161,5 @@ topologySpreadConstraints:
     labelSelector:
       matchLabels:
         app.kubernetes.io/name: app-chart
+    matchLabelKeys:
+      - pod-template-hash
