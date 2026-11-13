@@ -1,338 +1,203 @@
-# DevOps Tech Challenge 2 — Hello World on AWS EKS
+# 🚀 DevOps Tech Challenge 2: GitOps CI/CD to an Autoscaling EKS Cluster
 
-A Node.js/Express "Hello, World!" app, containerized with Docker, deployed to an autoscaling AWS EKS cluster provisioned with Terraform, and delivered through two CI/CD approaches:
+An end-to-end project that deploys a Node.js/Express app to **Amazon EKS** through **two CI/CD approaches** (Jenkins, and GitHub Actions + Argo CD), then hardens the platform for production and **tests it under failure**: broken releases, node drains, pod kills, and outages, all under live traffic.
 
-| Branch | CI/CD approach | Deploys to namespace |
+## ✅ What This Project Demonstrates
+
+- Infrastructure as Code with Terraform (VPC, EKS, node group, IAM)
+- Packaging an app with **Helm**: probes, resource requests, Ingress, HPA, PDB, topology spread
+- Two CI/CD approaches: **push-based** (Jenkins) vs **pull-based GitOps** (GitHub Actions + Argo CD)
+- Keyless AWS access from CI with **OIDC**
+- Pod and node autoscaling (**HPA + Cluster Autoscaler**)
+- Monitoring and alerting with **Prometheus, Grafana, and Alertmanager → Slack**
+- Failure testing under live traffic, and real troubleshooting
+
+## 🏗️ Architecture
+
+```
+                  GitHub (source of truth)
+                     │            ▲
+          push app/**│            │ commit new image tag
+                     ▼            │
+             GitHub Actions ──────┘──► Amazon ECR
+             (OIDC, no stored keys)        │
+                                           │ pull image
+  Argo CD (in cluster) ── syncs from Git ──┼──────────────┐
+                                           ▼              ▼
+  Users ──► ALB ──► Ingress ──►  Pods (AZ a)        Pods (AZ b)
+                                  │                       │
+             Prometheus ◄─────────┴── metrics ────────────┘
+                  │
+             Alertmanager ──► Slack
+```
+
+| Branch | CI/CD approach | Namespace |
 |---|---|---|
-| `main` | **Jenkins** pipeline: build → push to ECR → deploy with Helm + kubectl | `default` |
-| `gitops` | **GitHub Actions** (CI) + **Argo CD** (CD) | `gitops` |
+| `main` | Jenkins: build → push to ECR → Helm deploy | `default` |
+| `gitops` / `production-upgrade` | GitHub Actions (CI) + Argo CD (CD) | `gitops` |
 
-## Live URLs
+## 1️⃣ Provision the Infrastructure with Terraform
 
-- **Jenkins deployment (main):** http://k8s-default-helloapp-dfcca4182e-1004450607.us-east-1.elb.amazonaws.com
-- **GitOps deployment (gitops):** http://k8s-gitops-helloapp-006a690737-1288132214.us-east-1.elb.amazonaws.com
-
----
-
-## Architecture
-
-```mermaid
-flowchart LR
-    Dev[Developer] -->|git push main| GH[GitHub]
-    Dev -->|git push gitops| GH
-
-    subgraph Jenkins Flow
-      GH -->|pollSCM| J[Jenkins]
-      J -->|docker build + push| ECR[(Amazon ECR)]
-      J -->|helm upgrade + kubectl| EKS
-    end
-
-    subgraph GitOps Flow
-      GH -->|push event| GHA[GitHub Actions]
-      GHA -->|OIDC, build + push| ECR
-      GHA -->|commit new image tag| GH
-      ARGO[Argo CD] -->|watches gitops branch| GH
-      ARGO -->|sync| EKS
-    end
-
-    User[User] --> ALB[Application Load Balancer] --> EKS[EKS cluster: pods + HPA + Cluster Autoscaler]
-```
-
-**Request path:** Browser → ALB (public subnets) → Kubernetes Ingress → Service → Pods (port 3000) on worker nodes in private subnets.
-
----
-
-## Repository Structure
-
-```
-.
-├── app/                     # Node.js/Express app + Dockerfile
-├── app-chart/               # Helm chart (Deployment, Service, Ingress, HPA)
-├── terraform/               # VPC, EKS cluster, node group, IAM, security groups
-├── jenkins/Dockerfile       # Custom Jenkins image with docker, aws, kubectl, helm
-├── Jenkinsfile              # Jenkins CI/CD pipeline (main branch)
-├── .github/workflows/ci.yml # GitHub Actions CI (gitops branch)
-└── argocd/application.yaml  # Argo CD Application (gitops branch)
-```
-
----
-
-## Requirements Coverage
-
-| Requirement | Implementation |
-|---|---|
-| Hello World web app | Node.js/Express on port 3000 (`app/`) |
-| Dockerized | `app/Dockerfile`, built for `linux/amd64` |
-| EKS via Terraform | `terraform/` provisions VPC, EKS, managed node group |
-| 4 nodes total, 1 always active, t3.small | Node group `min_size = 1`, `desired_size = 1`, `max_size = 4`, `instance_types = ["t3.small"]` |
-| Node autoscaling | Cluster Autoscaler (IRSA) scales the node group when pods are Pending |
-| 1 pod per node, up to 3 per node | Pod anti-affinity spreads pods across nodes; 400m CPU requests limit a t3.small to ~3 app pods |
-| HPA at 50% CPU or memory, max 3 pods/node | HPA `minReplicas: 1`, `maxReplicas: 12` (3 × 4 nodes), 50% CPU and 50% memory targets |
-| ALB | AWS Load Balancer Controller provisions an internet-facing ALB from the Ingress |
-| Jenkins: build, push to ECR, deploy with kubectl & Helm | `Jenkinsfile` |
-| GitOps alternative | `gitops` branch: GitHub Actions + Argo CD |
-
----
-
-## Prerequisites
-
-- AWS account and an IAM user/role with permissions for EKS, EC2, IAM, ECR, and ELB
-- Tools installed locally: `aws` CLI v2, `terraform`, `kubectl`, `helm`, `eksctl`, `docker`, `git`
-- AWS credentials configured (`aws configure`)
-- An ECR repository named `devops-challenge2-app` in `us-east-1`
-
----
-
-## 1. Provision the Infrastructure (Terraform)
+**Why?** Building the cluster as code makes it repeatable, reviewable, and easy to tear down.
 
 ```bash
 cd terraform
 terraform init
-terraform plan
+terraform plan     # review exactly what will be created
 terraform apply
 aws eks update-kubeconfig --region us-east-1 --name devops-challenge2-cluster
 kubectl get nodes
 ```
 
-### Terraform Code Explained
-
-| File | Purpose |
+| Resource | Why |
 |---|---|
-| `provider.tf` | AWS provider configuration and region |
-| `variables.tf` | Input variables (project name, region, CIDRs, etc.) |
-| `vpc.tf` | VPC with public and private subnets across two AZs. Public subnets are tagged `kubernetes.io/role/elb = 1` so the ALB controller can place load balancers there |
-| `security-groups.tf` | Security groups for the cluster control plane and worker nodes |
-| `iam.tf` | IAM roles for the EKS control plane and worker nodes, including the worker node, CNI, and ECR read-only policies |
-| `eks-cluster.tf` | The EKS cluster (Kubernetes 1.31) |
-| `node-group.tf` | Managed node group: `t3.small`, min 1 / desired 1 / max 4, running in private subnets |
-| `outputs.tf` | Useful outputs such as the cluster name and endpoint |
+| **VPC across 2 AZs** (`10.1.0.0/16`) | Public subnets hold the ALB; private subnets hold the worker nodes so they're never exposed directly. Subnets are tagged so the ALB controller knows where to place load balancers. |
+| **Single NAT gateway** | Lets private nodes reach the internet (to pull images) while keeping cost down. Tradeoff: one per AZ would remove a single point of failure in production. |
+| **EKS cluster (Kubernetes 1.36)** | The managed Kubernetes control plane. |
+| **Managed node group** | t3.small, **min 2 / max 4**, in private subnets, `max_unavailable = 1` so node updates replace one node at a time. |
+| **IAM roles** | Separate roles for the control plane and worker nodes, including ECR read-only access so nodes can pull images. |
 
-> **Design note:** Worker nodes run in private subnets and are never directly exposed. Only the ALB sits in the public subnets.
+## 2️⃣ Install the Cluster Add-ons
 
----
+**Why?** Some cluster features need controllers running inside the cluster. These were installed with Helm.
 
-## 2. Install Cluster Add-ons
+| Add-on | Why |
+|---|---|
+| **IAM OIDC provider** | Lets Kubernetes service accounts assume IAM roles (IRSA), so add-ons get AWS permissions without stored keys |
+| **AWS Load Balancer Controller** | Reads the Ingress and creates the ALB |
+| **metrics-server** | Supplies CPU and memory numbers the HPA needs |
+| **Cluster Autoscaler** | Adds nodes when pods can't fit, removes idle ones |
+| **kube-prometheus-stack** | Prometheus, Grafana, and Alertmanager for monitoring |
 
-These were installed once after the cluster came up.
-
-### IAM OIDC provider (required for IRSA)
 ```bash
 eksctl utils associate-iam-oidc-provider --cluster devops-challenge2-cluster --region us-east-1 --approve
-```
-
-### AWS Load Balancer Controller
-```bash
-curl -o iam_policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
-aws iam create-policy --policy-name AWSLoadBalancerControllerIAMPolicy --policy-document file://iam_policy.json
-
-eksctl create iamserviceaccount \
-  --cluster devops-challenge2-cluster --region us-east-1 \
-  --namespace kube-system --name aws-load-balancer-controller \
-  --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy \
-  --approve
-
-helm repo add eks https://aws.github.io/eks-charts && helm repo update
-helm install aws-load-balancer-controller eks/aws-load-balancer-controller -n kube-system \
-  --set clusterName=devops-challenge2-cluster \
-  --set serviceAccount.create=false \
-  --set serviceAccount.name=aws-load-balancer-controller \
-  --set region=us-east-1 \
-  --set vpcId=<VPC_ID>
-```
-
-### metrics-server (required for HPA)
-```bash
-helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller -n kube-system ...
 helm install metrics-server metrics-server/metrics-server -n kube-system
+helm install cluster-autoscaler autoscaler/cluster-autoscaler -n kube-system ...
 ```
 
-### Cluster Autoscaler
-An IAM policy (`ClusterAutoscalerPolicy`) allows describing Auto Scaling groups and resizing **only** groups tagged `k8s.io/cluster-autoscaler/devops-challenge2-cluster = owned`.
+## 3️⃣ Containerize the App
+
+**Why?** A container packages the app with its dependencies so it runs the same everywhere.
 
 ```bash
-eksctl create iamserviceaccount \
-  --cluster devops-challenge2-cluster --region us-east-1 \
-  --namespace kube-system --name cluster-autoscaler \
-  --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/ClusterAutoscalerPolicy \
-  --approve
-
-helm repo add autoscaler https://kubernetes.github.io/autoscaler
-helm install cluster-autoscaler autoscaler/cluster-autoscaler -n kube-system \
-  --set autoDiscovery.clusterName=devops-challenge2-cluster \
-  --set awsRegion=us-east-1 \
-  --set rbac.serviceAccount.create=false \
-  --set rbac.serviceAccount.name=cluster-autoscaler \
-  --set image.tag=v1.31.0
+docker build --platform linux/amd64 -t hello-app ./app
 ```
 
----
+**Why `--platform linux/amd64`?** Jenkins builds on an ARM Mac, but the EKS nodes are amd64. Without the flag, the image won't run on the nodes.
 
-## 3. Helm Chart Highlights (`app-chart/values.yaml`)
+## 4️⃣ Package the App with Helm
 
-```yaml
-resources:
-  requests: { cpu: 400m, memory: 128Mi }
-  limits:   { cpu: 500m, memory: 256Mi }
+**Why?** One Helm chart describes everything the app needs to **run, be reached, scale, and stay protected**.
 
-autoscaling:
-  enabled: true
-  minReplicas: 1
-  maxReplicas: 12
-  targetCPUUtilizationPercentage: 50
-  targetMemoryUtilizationPercentage: 50
+| Piece | Setting | Why |
+|---|---|---|
+| **Deployment** | Readiness and liveness probes; requests `400m` CPU / `128Mi` | Readiness keeps pods out of traffic until they're ready; liveness restarts stuck containers; requests tell Kubernetes how much room each pod needs |
+| **Service** | ClusterIP on port 3000 | A permanent address for the pods inside the cluster |
+| **Ingress** | ALB, `internet-facing`, `target-type: ip` | The Load Balancer Controller builds one ALB that sends traffic straight to pod IPs |
+| **HPA** | 2 to 12 replicas at 50% CPU and memory | Adds pods as load grows; the Cluster Autoscaler adds nodes when pods don't fit |
+| **Pod Disruption Budget** | `minAvailable: 1` | Node drains can never evict the last running pod |
+| **Topology spread** | Across zones, with `matchLabelKeys: [pod-template-hash]` | Keeps replicas in different zones, even during rolling updates |
+| **values.yaml** | Image tag = commit SHA | Nothing is hardcoded; every deploy is a real, traceable change |
 
-ingress:
-  enabled: true
-  className: alb
-  annotations:
-    alb.ingress.kubernetes.io/scheme: internet-facing
-    alb.ingress.kubernetes.io/target-type: ip
-```
+## 5️⃣ Pipeline 1: Jenkins (push-based)
 
-Pods use **preferred pod anti-affinity** on `kubernetes.io/hostname`, so the scheduler spreads replicas across nodes first and stacks them only when needed.
+**Why?** A traditional pipeline that builds and deploys from outside the cluster.
 
-### How autoscaling works end to end
-1. Load increases and CPU passes 50% of the requested 400m.
-2. The **HPA** adds replicas.
-3. When a node has no room left (about 3 app pods per t3.small), new pods go **Pending**.
-4. The **Cluster Autoscaler** sees the Pending pods and grows the node group, up to 4 nodes.
-5. When load drops, pods scale in after about 5 minutes and extra nodes after about 10.
+| Stage | What it does | Why |
+|---|---|---|
+| **Trigger** | `pollSCM('H/5 * * * *')` | Jenkins runs locally on my Mac, so GitHub can't reach it with a webhook; polling checks for new commits every 5 minutes instead |
+| **Build** | `docker build --platform linux/amd64`, tagged with the build number | Matches the node platform; the build number makes each release traceable |
+| **Push** | Logs in to ECR with a short-lived token and pushes | Nodes pull images from ECR |
+| **Deploy** | `helm upgrade --install --wait --timeout 5m`, then `kubectl rollout status` | If the new pods never become healthy, the **build fails instead of the release going live** |
+| **Post** | Logs out of ECR | Doesn't leave registry credentials behind |
 
----
+Jenkins is configured as a **Pipeline script from SCM** job pointing at the `Jenkinsfile` in this repo.
 
-## 4. Jenkins CI/CD (main branch)
+## 6️⃣ Pipeline 2: GitOps with GitHub Actions + Argo CD (pull-based)
 
-### Run Jenkins locally in Docker
-The custom image (`jenkins/Dockerfile`) adds the Docker CLI + buildx, AWS CLI v2, kubectl 1.31, and Helm 3.
+**Why?** In GitOps, **Git is the single source of truth.** The CI pipeline never touches the cluster; Argo CD runs **inside** the cluster and **pulls** changes from Git, so nothing outside needs cluster access.
 
-```bash
-docker build -t jenkins-devops jenkins/
-docker run -d --name jenkins \
-  -p 8080:8080 -p 50000:50000 \
-  -v jenkins_home:/var/jenkins_home \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v ~/.aws:/root/.aws:ro \
-  jenkins-devops
-docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
-```
+**The flow:**
+1. A push that changes `app/**` triggers GitHub Actions.
+2. Actions logs in to AWS with **OIDC**: GitHub issues a short-lived token, and the IAM role's trust policy only accepts tokens from this repo and branch. AWS returns temporary credentials, so there are **no stored keys to leak or rotate**.
+3. Builds the image for amd64 and pushes it to ECR, tagged with the **commit SHA**.
+4. Commits the new tag into `app-chart/values.yaml` (`[skip ci]` prevents a loop).
+5. **Argo CD** sees the change and syncs the cluster.
 
-Open http://localhost:8080, install the suggested plugins, then:
-1. Add a **Username with password** credential (ID `github-pat`) using a GitHub fine-grained token with **Contents: Read-only**.
-2. Create a **Pipeline** job using *Pipeline script from SCM* → Git → this repo → branch `*/main` → script path `Jenkinsfile`.
+**Argo CD settings:**
+- **Auto-sync:** applies new commits automatically
+- **Prune:** removes resources deleted from Git
+- **Self-heal:** undoes manual changes in the cluster, so it always matches Git
 
-### Pipeline Explained (`Jenkinsfile`)
+**Why this matters:** every change is a reviewed commit, and **rollback is just a `git revert`**.
 
-| Stage | What it does |
+## 7️⃣ Monitoring and Alerting
+
+**Why?** To find out about problems **before users report them**.
+
+| Piece | What it does |
 |---|---|
-| **Trigger** | `pollSCM('H/5 * * * *')` checks GitHub every 5 minutes, so every push to `main` deploys automatically |
-| **Checkout** | Pulls the repo |
-| **Build Image** | `docker build --platform linux/amd64`, tagged with the Jenkins build number and `latest`. EKS nodes are x86_64, so the image is built for amd64 even on an ARM Mac |
-| **Push to ECR** | Logs in with a short-lived ECR token and pushes both tags |
-| **Deploy to EKS** | `helm upgrade --install` with the new image tag, then `kubectl rollout status` to confirm the new pods are healthy |
-| **Verify** | Prints pods, HPA, and ingress into the build log |
-| **Post** | Always logs out of ECR |
+| **Prometheus** | Collects metrics and evaluates alert rules |
+| **Alert rule `HelloAppDown`** | Fires when available app pods stay **below 1 for a full minute** (`for: 1m` filters out short blips) |
+| **Alertmanager** | Routes `HelloApp` alerts to Slack, waits 30 seconds to group related alerts, and sends a "resolved" message when fixed |
+| **Slack webhook** | Stored in a **Kubernetes Secret**, never in the config or Git |
+| **Grafana** | Dashboards showing usage and capacity |
 
-Tagging with the build number makes every deployment traceable and easy to roll back (`helm rollback hello-app <revision>`).
+**Grafana finding:** at idle, the app used only a small fraction of its requested CPU and memory, so requests can be right-sized after load testing.
 
-> **Local-setup tradeoffs:** Jenkins runs as root so it can use the host Docker socket, and it reads AWS credentials from a read-only mount of `~/.aws`. In production, you would run Jenkins on dedicated infrastructure, use an IAM role instead of mounted credentials, and use GitHub webhooks instead of polling.
+## 8️⃣ Failure Testing
 
----
+**Why?** A deployment that works isn't the same as a platform that **fails safely**. Each test ran while a steady stream of HTTP requests hit the app through the ALB, with every response logged.
 
-## 5. GitOps CI/CD (gitops branch)
+| Test | How | What it validates |
+|---|---|---|
+| **Broken release** | Pushed an image tag that doesn't exist through Git | New pods never become Ready, so they never get traffic; old pods keep serving. Rollback through `git revert` |
+| **Node drain** | Drained a node running the app, before and after adding topology spread, the PDB, and 2 minimum replicas | Maintenance doesn't take the app down |
+| **Pod kill** | Deleted a running pod | Kubernetes replaces it while the remaining pods keep serving |
+| **Time to detect** | Scaled the app to 0 | The outage alert reaches Slack, followed by a "resolved" message |
 
-### Flow
-1. A push to `gitops` that changes `app/**` triggers **GitHub Actions**.
-2. Actions authenticates to AWS with **OIDC** (no stored AWS keys), builds the image for amd64, and pushes it to ECR tagged with the commit SHA.
-3. Actions commits the new tag into `app-chart/values.yaml` on the `gitops` branch.
-4. **Argo CD** watches `app-chart/` on the `gitops` branch and automatically syncs the change to the cluster.
+**Key takeaway:** Kubernetes only replaces old pods when new ones pass their readiness probe, so a broken release never reaches users. But Kubernetes doesn't roll back on its own; **the rollback came from Git**.
 
-The CI pipeline never touches the cluster. Git is the single source of truth.
-
-### AWS access for GitHub Actions
-- An IAM OIDC provider for `token.actions.githubusercontent.com`
-- An IAM role, `github-actions-ecr-push`, that:
-  - trusts only this repository's `gitops` branch
-  - can push only to the `devops-challenge2-app` ECR repository
-
-> **Note:** GitHub's OIDC `sub` claim includes immutable owner and repository IDs (for example `repo:owner@<id>/repo@<id>:ref:refs/heads/gitops`). The IAM trust policy must match this exact format.
-
-### Argo CD setup
-```bash
-kubectl create namespace argocd
-kubectl apply -n argocd --server-side --force-conflicts \
-  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-
-kubectl port-forward svc/argocd-server -n argocd 8081:443
-kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d; echo
-```
-
-In the Argo CD UI (https://localhost:8081), connect this private repo under **Settings → Repositories** using a GitHub token with **Contents: Read-only**. Then apply the Application:
-
-```bash
-kubectl apply -f argocd/application.yaml
-```
-
-`argocd/application.yaml` uses automated sync with `prune` and `selfHeal`, so manual changes in the cluster are reverted to match Git. It deploys into its own `gitops` namespace so it never conflicts with the Jenkins-managed release in `default`.
-
----
-
-## 6. Test Autoscaling
-
-```bash
-kubectl run load-gen --image=busybox --restart=Never -- /bin/sh -c \
-  "for i in 1 2 3 4 5 6 7 8; do (while true; do wget -q -O- http://hello-app-app-chart:3000 >/dev/null 2>&1; done) & done; wait"
-
-kubectl get hpa
-kubectl get pods -o wide
-kubectl get nodes
-
-kubectl delete pod load-gen   # stop the test
-```
-
----
-
-## 7. Teardown
-
-Delete Kubernetes-created AWS resources **before** running `terraform destroy`. ALBs created by the Load Balancer Controller are not managed by Terraform, and leftover ALBs or their security groups will block the VPC from being deleted.
-
-```bash
-# 1. Remove the apps (this deletes their ALBs)
-kubectl delete -f argocd/application.yaml
-helm uninstall hello-app
-kubectl delete namespace gitops
-
-# 2. Confirm both ALBs are gone (wait until this returns nothing)
-aws elbv2 describe-load-balancers --query "LoadBalancers[?contains(LoadBalancerName,'k8s-')].LoadBalancerName"
-
-# 3. Remove add-ons and IRSA roles
-helm uninstall aws-load-balancer-controller -n kube-system
-helm uninstall cluster-autoscaler -n kube-system
-kubectl delete namespace argocd
-eksctl delete iamserviceaccount --cluster devops-challenge2-cluster --region us-east-1 --namespace kube-system --name aws-load-balancer-controller
-eksctl delete iamserviceaccount --cluster devops-challenge2-cluster --region us-east-1 --namespace kube-system --name cluster-autoscaler
-
-# 4. Destroy the infrastructure
-cd terraform && terraform destroy
-
-# 5. Clean up manually created IAM resources
-aws iam delete-policy --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy
-aws iam delete-policy --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/ClusterAutoscalerPolicy
-aws iam delete-role-policy --role-name github-actions-ecr-push --policy-name ecr-push
-aws iam delete-role --role-name github-actions-ecr-push
-aws iam list-open-id-connect-providers   # delete the EKS and GitHub providers if no longer needed
-
-# 6. Stop local Jenkins
-docker rm -f jenkins
-```
-
----
-
-## Troubleshooting Notes (Issues Hit While Building)
+## 🛠️ Troubleshooting (Issues Hit While Building)
 
 | Problem | Cause | Fix |
 |---|---|---|
-| No IAM OIDC provider for the cluster | The cluster had an OIDC issuer, but it was not registered with IAM | `eksctl utils associate-iam-oidc-provider` |
-| HPA targets showed `<unknown>` | Pods had no CPU/memory requests, so utilization could not be calculated | Added `resources.requests` to the chart |
-| Helm failed with a YAML parse error | `resources: {}` still had its braces while nested keys were added below it | Removed the `{}` |
-| GitHub Actions `Not authorized to perform sts:AssumeRoleWithWebIdentity` | GitHub's OIDC `sub` claim includes immutable owner/repo IDs, which did not match the trust policy | Decoded the token claims in the workflow and updated the trust policy to the exact `sub` value |
-| `git push` rejected on `gitops` | The CI bot had committed a new image tag | `git pull --rebase` before pushing |
+| **Both pods landed on one node**, so a node drain caused failed requests | Anti-affinity was only *preferred* (a suggestion). Topology spread then counted **old** pods during rolling updates and put both new pods in one zone | Added `matchLabelKeys: [pod-template-hash]` so only pods from the same rollout are counted. Chose this over *required* anti-affinity, which would cap pods at one per node and block the HPA from reaching 12 |
+| **GitHub Actions couldn't assume its role** | GitHub's OIDC `sub` includes immutable owner/repo IDs that didn't match the trust policy | Decoded and printed the token's claims, then matched the trust policy to the exact value |
+| **Slack alert never arrived** | The alert was firing in Grafana, so Prometheus worked; Alertmanager logs showed "unsupported protocol scheme" because the Secret was **empty** | Recreated the Secret from a temporary file, deleted the file, and retested: the alert arrived |
+| **Pod Pending with "Too many pods"** | A t3.small allows only 11 pods, since each pod takes a VPC IP. The autoscaler can't help DaemonSet pods | Cordoned the full node and rescheduled one controller replica. Long-term: larger instances or VPC CNI prefix delegation |
+| **HPA showed `<unknown>`** | Pods had no resource requests, so utilization couldn't be calculated | Added requests to the chart |
+| **No IAM OIDC provider** | The cluster's OIDC issuer wasn't registered with IAM | `eksctl utils associate-iam-oidc-provider` |
+
+## 🧠 Lessons Learned
+
+- **A config that looks right isn't proven until you test it under failure.**
+- **Readiness gates protect users; Git gives you the rollback.**
+- **Print the real value instead of assuming** (the OIDC `sub` claim).
+- **Test alerts end to end**, not just the rule.
+
+## ➡️ Next Steps
+
+- Add **`npm test`** and **Trivy** image scanning to the pipelines
+- **Canary releases with Argo Rollouts** for automatic rollback on bad metrics
+- A pre-merge check that the image tag **exists in ECR**
+- **Graceful shutdown** (handle `SIGTERM`) in the app
+- Manage cluster add-ons **as code**
+- **One NAT gateway per AZ** for production
+
+## 🧹 Teardown
+
+Delete Kubernetes-created AWS resources first: ALBs made by the Load Balancer Controller aren't managed by Terraform and will block the VPC from being deleted.
+
+```bash
+kubectl delete -f argocd/application.yaml
+helm uninstall hello-app
+kubectl delete namespace gitops
+# wait until no k8s- load balancers remain:
+aws elbv2 describe-load-balancers --query "LoadBalancers[?contains(LoadBalancerName,'k8s-')].LoadBalancerName"
+helm uninstall monitoring -n monitoring
+helm uninstall aws-load-balancer-controller -n kube-system
+helm uninstall cluster-autoscaler -n kube-system
+cd terraform && terraform destroy
+```
