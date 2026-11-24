@@ -24,3 +24,13 @@ module "eks" {
   node_desired_size   = var.node_desired_size
   node_max_size       = var.node_max_size
 }
+
+module "addon_iam" {
+  source = "./modules/addon-iam"
+
+  project_name = var.project_name
+  cluster_name = module.eks.cluster_name
+
+  # Wait for the node group too, so the Pod Identity agent has nodes to run on
+  depends_on = [module.eks]
+}
