@@ -10,7 +10,7 @@ image:
   # This sets the pull policy for images.
   pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "117934f501b701db3cb766f5a34a509be37127c0"
+  tag: "f660997c821df21b13103cd91522e11d69d80c61"
 # This is for the secrets for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
 imagePullSecrets: []
 # This is to override the chart name.
@@ -153,7 +153,6 @@ affinity:
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: app-chart
-
 topologySpreadConstraints:
   - maxSkew: 1
     topologyKey: topology.kubernetes.io/zone
