@@ -21,3 +21,15 @@ variable "ecr_repository_name" {
   type        = string
   default     = "devops-challenge2-app"
 }
+
+variable "github_owner_id" {
+  description = "Immutable numeric ID of the GitHub owner (from the OIDC sub claim)"
+  type        = string
+  default     = "333077763"
+}
+
+variable "github_repo_id" {
+  description = "Immutable numeric ID of the GitHub repo (from the OIDC sub claim)"
+  type        = string
+  default     = "1386175288"
+}
