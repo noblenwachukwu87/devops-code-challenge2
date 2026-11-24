@@ -1,0 +1,55 @@
+name: Terraform checks
+
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - "bootstrap/**"
+      - ".github/workflows/terraform.yml"
+  push:
+    branches: [production-upgrade]
+    paths:
+      - "terraform/**"
+      - "bootstrap/**"
+      - ".github/workflows/terraform.yml"
+
+permissions:
+  contents: read # read-only: this workflow never touches AWS or pushes code
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dir: [terraform, bootstrap]
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.8
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Init (no backend, no AWS access needed)
+        run: terraform init -backend=false
+
+      - name: Validate
+        run: terraform validate
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Trivy IaC misconfiguration scan
+        uses: aquasecurity/trivy-action@v0.36.0 # pinned to an immutable release
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "0" # report-only for now; we'll make it blocking after triage
