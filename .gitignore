@@ -7,3 +7,4 @@ iam_policy.json
 *.tfstate.*
 *.log
 tfplan
+*.log

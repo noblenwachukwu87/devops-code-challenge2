@@ -2,15 +2,15 @@ name: CI - Build, Push to ECR, Update Helm Tag
 
 on:
   push:
-    branches: [gitops]
+    branches: [production-upgrade]
     paths:
-      - 'app/**'
-      - '.github/workflows/ci.yml'
+      - "app/**"
+      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 permissions:
-  id-token: write   # needed for OIDC login to AWS
-  contents: write   # needed to commit the new image tag
+  id-token: write # needed for OIDC login to AWS
+  contents: write # needed to commit the new image tag
 
 env:
   AWS_REGION: us-east-1
@@ -23,8 +23,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
