@@ -1,3 +1,17 @@
+resource "aws_kms_key" "eks_secrets" {
+  description             = "Encrypts Kubernetes Secrets for ${var.cluster_name}"
+  enable_key_rotation     = true
+  deletion_window_in_days = 7
+}
+
+resource "aws_kms_alias" "eks_secrets" {
+  name          = "alias/${var.cluster_name}-secrets"
+  target_key_id = aws_kms_key.eks_secrets.key_id
+}
+
+
+
+
 resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
   role_arn = aws_iam_role.eks_cluster.arn
@@ -9,6 +23,14 @@ resource "aws_eks_cluster" "main" {
     endpoint_public_access  = true
     endpoint_private_access = true
     public_access_cidrs     = var.endpoint_public_access_cidrs
+  }
+
+  encryption_config {
+    resources = ["secrets"]
+
+    provider {
+      key_arn = aws_kms_key.eks_secrets.arn
+    }
   }
 
   lifecycle {

@@ -15,9 +15,11 @@ module "eks" {
   cluster_name    = var.cluster_name
   cluster_version = var.cluster_version
 
-  cluster_subnet_ids         = concat(module.network.public_subnet_ids, module.network.private_subnet_ids)
-  node_subnet_ids            = module.network.private_subnet_ids
-  cluster_security_group_ids = [module.network.cluster_security_group_id]
+
+  cluster_subnet_ids           = concat(module.network.public_subnet_ids, module.network.private_subnet_ids)
+  node_subnet_ids              = module.network.private_subnet_ids
+  cluster_security_group_ids   = [module.network.cluster_security_group_id]
+  endpoint_public_access_cidrs = var.endpoint_public_access_cidrs
 
   node_instance_types = var.node_instance_types
   node_min_size       = var.node_min_size

@@ -1,0 +1,2 @@
+# Copy to terraform.tfvars and set your public IP (find it: curl https://checkip.amazonaws.com)
+endpoint_public_access_cidrs = ["203.0.113.10/32"]

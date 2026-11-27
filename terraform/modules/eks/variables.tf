@@ -27,9 +27,8 @@ variable "cluster_security_group_ids" {
 }
 
 variable "endpoint_public_access_cidrs" {
-  description = "Who can reach the Kubernetes API from the internet. Lock this to your IP for tighter security."
+  description = "Who can reach the Kubernetes API from the internet"
   type        = list(string)
-  default     = ["0.0.0.0/0"]
 }
 
 variable "node_instance_types" {

@@ -1,0 +1,30 @@
+# Reviewed security exceptions. Each one is accepted on purpose, with the reason and the plan to remove it.
+misconfigurations:
+  - id: AWS-0040
+    paths:
+      - "terraform/modules/eks/main.tf"
+    statement: >-
+      Public EKS API endpoint is required because kubectl/Helm run from a laptop with no VPN or bastion.
+      Mitigated: access is restricted to a single /32 via public_access_cidrs, enforced by a validation rule
+      that rejects 0.0.0.0/0. Next step: private-only endpoint with SSM bastion or VPN.
+
+  - id: AWS-0104
+    paths:
+      - "terraform/modules/network/main.tf"
+    statement: >-
+      Nodes need outbound HTTPS to ECR, AWS APIs, GitHub (Argo CD) and Slack (Alertmanager), through the NAT gateway.
+      Next step: VPC endpoints for ECR, S3, STS and CloudWatch to cut internet egress.
+
+  - id: AWS-0132
+    paths:
+      - "bootstrap/state-bucket.tf"
+    statement: >-
+      State bucket uses SSE-S3 encryption and is private, TLS-only and versioned.
+      A customer-managed KMS key adds cost and key-policy complexity with little benefit at this scale.
+
+  - id: DS-0002
+    paths:
+      - "jenkins/Dockerfile"
+    statement: >-
+      Local learning Jenkins needs the Docker socket to build images. Not deployed anywhere.
+      Next step: run as the jenkins user and grant socket access through the docker group.

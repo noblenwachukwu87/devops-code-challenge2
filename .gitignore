@@ -8,3 +8,5 @@ iam_policy.json
 *.log
 tfplan
 *.log
+*.tfvars
+!*.tfvars.example

@@ -52,4 +52,5 @@ jobs:
           scan-type: config
           scan-ref: .
           severity: HIGH,CRITICAL
-          exit-code: "0" # report-only for now; we'll make it blocking after triage
+          exit-code: "1" # blocking: new HIGH/CRITICAL findings fail the pipeline
+          trivyignores: .trivyignore.yaml # reviewed exceptions, each with a reason

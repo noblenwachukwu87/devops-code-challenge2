@@ -54,3 +54,13 @@ variable "node_max_size" {
   type    = number
   default = 4
 }
+
+variable "endpoint_public_access_cidrs" {
+  description = "IPs allowed to reach the EKS API. Set your IP as /32 in terraform.tfvars (not committed)."
+  type        = list(string)
+
+  validation {
+    condition     = !contains(var.endpoint_public_access_cidrs, "0.0.0.0/0")
+    error_message = "Don't open the EKS API to the whole internet. Use your own IP as a /32."
+  }
+}

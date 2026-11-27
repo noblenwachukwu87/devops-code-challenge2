@@ -45,3 +45,22 @@ resource "aws_iam_role_policy_attachment" "eks_ecr_readonly" {
   role       = aws_iam_role.eks_nodes.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
+
+resource "aws_iam_role_policy" "eks_cluster_kms" {
+  name = "eks-secrets-kms"
+  role = aws_iam_role.eks_cluster.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ListGrants",
+        "kms:DescribeKey"
+      ]
+      Resource = aws_kms_key.eks_secrets.arn
+    }]
+  })
+}
